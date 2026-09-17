@@ -76,7 +76,7 @@ Rotate by replacing `API_BEARER_TOKEN` in Railway and restarting/redeploying, th
 | `PINATA_JWT` | Preferred server-only credential; pin-file and pin-JSON permissions required |
 | `PINATA_KEY`, `PINATA_SECRET` | Alternative existing credentials; JWT takes precedence |
 | `PORT` | `3001`; Railway supplies its port automatically |
-| `ALLOWED_ORIGINS` | `https://poidh.xyz`; comma-separated exact browser origins, no trailing slash or wildcard |
+| `ALLOWED_ORIGINS` | `https://poidh.xyz,https://*.poidh.xyz`; comma-separated HTTP(S) origins, optional leading subdomain wildcard, no trailing slash |
 | `MAX_FILE_SIZE_BYTES` | `30485760`, matching the old Cloud Function |
 | `MAX_CONCURRENT_UPLOADS` | `4` per process; extra file uploads receive 503 |
 | `RATE_LIMIT_MAX` | `10` upload requests per IP per window; both endpoints share the quota |
@@ -84,12 +84,14 @@ Rotate by replacing `API_BEARER_TOKEN` in Railway and restarting/redeploying, th
 | `PINATA_TIMEOUT_MS` | `60000`; upstream timeout produces 504 |
 | `TRUST_PROXY_HOPS` | `0` for direct connections; configure for your verified Railway proxy path |
 
+`https://*.poidh.xyz` allows HTTPS subdomains, including nested ones such as `preview.app.poidh.xyz`, on the default HTTPS port. It does not include the root `https://poidh.xyz`, HTTP origins, or custom ports; list those explicitly if needed. Lookalike domains such as `poidh.xyz.evil.com` are rejected. Wildcards trust every matching subdomain, so use exact origins if any subdomain hosts untrusted users or third-party content. Bearer authentication remains required.
+
 ## Deploy to Railway
 
 1. Push this directory to a Git repository and connect it to a new Railway service. If it is a standalone repository, use repository root. If using a monorepo, set the service root to this directory and select its `railway.json` as the config file if necessary.
 2. Railway builds the included Dockerfile. It installs locked production dependencies, runs as a non-root user, and starts `node src/index.js`. No build script or disk volume is necessary. `.env` files are excluded from the image.
 3. Add `PINATA_JWT` **from the existing Pinata account**, or its existing key/secret pair, plus a separately generated `API_BEARER_TOKEN`, in Railway Variables. Do not paste secrets into source code or chat.
-4. Set `ALLOWED_ORIGINS` to your real frontend origins, e.g. `https://poidh.xyz,https://www.poidh.xyz` only if both are used. Leave localhost out of production.
+4. Set `ALLOWED_ORIGINS=https://poidh.xyz,https://*.poidh.xyz` to allow the root and all HTTPS subdomains, or list exact origins for narrower access. Leave localhost out of production. An existing Railway variable overrides the defaults and must be updated explicitly.
 5. Configure `TRUST_PROXY_HOPS` for the actual ingress path. `1` is appropriate only when there is exactly one trusted proxy between clients and the app. Confirm with Railway's current networking behavior and any additional CDN. Never blindly trust all forwarded headers: over-trusting allows IP spoofing; leaving `0` behind a proxy can rate-limit all users together. Verify distinct clients get distinct rate-limit buckets before cutover.
 6. Deploy and generate a public Railway domain. `/health` is configured in `railway.json`. It checks process liveness, not Pinata credentials or upstream availability. The process listens on `0.0.0.0:$PORT` and writes operational events to stdout/stderr.
 7. Start with **one replica**. Rate-limit counters and concurrency controls are in-memory and reset on restart. Multiple replicas require shared rate limiting for a global quota. Four maximum-size uploads plus multipart/Blob copies require substantially more than 120 MB RAM; size the instance conservatively or reduce concurrency.

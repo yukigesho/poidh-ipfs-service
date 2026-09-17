@@ -7,6 +7,7 @@ import { fileTypeFromBuffer } from "file-type";
 import Ajv from "ajv";
 import { PinataError } from "./pinata.js";
 import { requireBearer } from "./auth.js";
+import { createOriginMatcher } from "./origins.js";
 
 const validateMetadata = new Ajv().compile({
   type: "object",
@@ -98,20 +99,25 @@ function errorHandler(error, _req, res, _next) {
 
 export function createApp(config, pinata) {
   const app = express();
+  const isAllowedOrigin = createOriginMatcher(config.origins);
   app.disable("x-powered-by");
   app.set("trust proxy", config.trustProxyHops);
   app.use(helmet());
   // Liveness only: no paid upstream request, no rate limiting.
   app.get("/health", (_req, res) => res.json({ status: "ok" }));
   app.use((req, res, next) => {
-    if (req.headers.origin && !config.origins.includes(req.headers.origin)) {
+    if (
+      req.headers.origin !== undefined &&
+      !isAllowedOrigin(req.headers.origin)
+    ) {
       return res.status(403).json({ error: "Origin not allowed" });
     }
     next();
   });
   app.use(
     cors({
-      origin: config.origins,
+      origin: (origin, callback) =>
+        callback(null, origin !== undefined && isAllowedOrigin(origin)),
       methods: ["POST"],
       allowedHeaders: ["Content-Type", "Authorization"],
     }),

@@ -1,4 +1,5 @@
 import { validApiToken } from "./auth.js";
+import { validOriginRule } from "./origins.js";
 
 function integer(env, name, fallback, min, max) {
   const raw = env[name] ?? String(fallback);
@@ -30,22 +31,15 @@ export function loadConfig(env = process.env) {
       "API_BEARER_TOKEN must be separate from Pinata credentials",
     );
   }
-  const origins = (env.ALLOWED_ORIGINS ?? "https://poidh.xyz")
+  const origins = (
+    env.ALLOWED_ORIGINS ?? "https://poidh.xyz,https://*.poidh.xyz"
+  )
     .split(",")
     .map((value) => value.trim())
     .filter(Boolean);
-  if (
-    !origins.length ||
-    origins.some((origin) => {
-      try {
-        return new URL(origin).origin !== origin || !/^https?:/.test(origin);
-      } catch {
-        return true;
-      }
-    })
-  ) {
+  if (!origins.length || origins.some((origin) => !validOriginRule(origin))) {
     throw new Error(
-      "ALLOWED_ORIGINS must contain comma-separated HTTP(S) origins without trailing slashes",
+      "ALLOWED_ORIGINS must contain HTTP(S) origins or leading subdomain wildcards (https://*.poidh.xyz), without trailing slashes",
     );
   }
   return {
