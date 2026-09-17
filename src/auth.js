@@ -1,4 +1,5 @@
 import { createHash, timingSafeEqual } from "node:crypto";
+import { logEvent } from "./logging.js";
 
 export function validApiToken(token) {
   return (
@@ -26,6 +27,9 @@ export function requireBearer(token) {
         ? /^Bearer ([A-Za-z0-9_-]{32,256})$/i.exec(headers[0])
         : null;
     if (!match || !timingSafeEqual(digest(match[1]), expected)) {
+      logEvent("auth_rejected", {
+        reason: headers.length === 0 ? "missing_token" : "invalid_token",
+      });
       res.set("WWW-Authenticate", 'Bearer realm="uploads"');
       res.set("Cache-Control", "no-store");
       return res.status(401).json({ error: "Unauthorized" });

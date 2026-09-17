@@ -1,3 +1,5 @@
+import { logEvent } from "./logging.js";
+
 export class PinataError extends Error {
   constructor(status, message) {
     super(message);
@@ -8,6 +10,9 @@ export class PinataError extends Error {
 // Keep the existing public-IPFS endpoints and their IpfsHash response contract.
 export function createPinataClient(config, fetchImpl = fetch) {
   async function request(endpoint, body, extraHeaders = {}) {
+    const started = performance.now();
+    let upstreamStatus;
+    logEvent("pinata_request_started", { operation: endpoint });
     try {
       const response = await fetchImpl(
         `https://api.pinata.cloud/pinning/${endpoint}`,
@@ -18,6 +23,7 @@ export function createPinataClient(config, fetchImpl = fetch) {
           signal: AbortSignal.timeout(config.pinataTimeoutMs),
         },
       );
+      upstreamStatus = response.status;
       if (!response.ok) {
         await response.body?.cancel();
         throw new PinataError(502, "Pinata upload failed");
@@ -26,8 +32,25 @@ export function createPinataClient(config, fetchImpl = fetch) {
       if (!result || typeof result.IpfsHash !== "string" || !result.IpfsHash) {
         throw new PinataError(502, "Invalid response from Pinata");
       }
+      logEvent("pinata_request_completed", {
+        operation: endpoint,
+        upstreamStatus,
+        durationMs: Math.round(performance.now() - started),
+      });
       return result;
     } catch (error) {
+      const timeout =
+        error.name === "TimeoutError" || error.name === "AbortError";
+      logEvent("pinata_request_failed", {
+        operation: endpoint,
+        ...(upstreamStatus !== undefined ? { upstreamStatus } : {}),
+        reason: timeout
+          ? "timeout"
+          : upstreamStatus === undefined
+            ? "network_error"
+            : "upstream_error",
+        durationMs: Math.round(performance.now() - started),
+      });
       if (error instanceof PinataError) throw error;
       if (error.name === "TimeoutError" || error.name === "AbortError") {
         throw new PinataError(504, "Pinata upload timed out");

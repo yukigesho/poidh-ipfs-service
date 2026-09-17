@@ -8,6 +8,7 @@ import Ajv from "ajv";
 import { PinataError } from "./pinata.js";
 import { requireBearer } from "./auth.js";
 import { createOriginMatcher } from "./origins.js";
+import { logEvent, requestLogging } from "./logging.js";
 
 const validateMetadata = new Ajv().compile({
   type: "object",
@@ -88,20 +89,19 @@ function errorHandler(error, _req, res, _next) {
   if (error.type === "entity.parse.failed")
     return res.status(400).json({ error: "Invalid JSON" });
   if (error instanceof PinataError) {
-    console.error(
-      JSON.stringify({ event: "pinata_error", status: error.status }),
-    );
+    logEvent("pinata_error", { status: error.status });
     return res.status(error.status).json({ error: error.message });
   }
-  console.error(JSON.stringify({ event: "request_error", type: error.name }));
+  logEvent("request_error", { status: 500 });
   return res.status(500).json({ error: "Internal server error" });
 }
 
-export function createApp(config, pinata) {
+export function createApp(config, pinata, writeLog) {
   const app = express();
   const isAllowedOrigin = createOriginMatcher(config.origins);
   app.disable("x-powered-by");
   app.set("trust proxy", config.trustProxyHops);
+  app.use(requestLogging(writeLog));
   app.use(helmet());
   // Liveness only: no paid upstream request, no rate limiting.
   app.get("/health", (_req, res) => res.json({ status: "ok" }));
@@ -110,6 +110,7 @@ export function createApp(config, pinata) {
       req.headers.origin !== undefined &&
       !isAllowedOrigin(req.headers.origin)
     ) {
+      logEvent("origin_rejected");
       return res.status(403).json({ error: "Origin not allowed" });
     }
     next();
@@ -120,6 +121,7 @@ export function createApp(config, pinata) {
         callback(null, origin !== undefined && isAllowedOrigin(origin)),
       methods: ["POST"],
       allowedHeaders: ["Content-Type", "Authorization"],
+      exposedHeaders: ["X-Request-ID"],
     }),
   );
   app.use(
@@ -165,6 +167,10 @@ export function createApp(config, pinata) {
         const type = await detectedImage(req.file.buffer);
         if (!type) return res.status(400).json({ error: "Invalid image type" });
         if (res.destroyed) return;
+        logEvent("image_validated", {
+          bytes: req.file.buffer.length,
+          mimeType: type.mime,
+        });
         // Trust detected bytes, not the client-supplied MIME type or extension.
         const file = {
           buffer: req.file.buffer,
@@ -185,6 +191,7 @@ export function createApp(config, pinata) {
       if (!validateMetadata(req.body?.metadata)) {
         return res.status(400).json({ error: "Invalid metadata" });
       }
+      logEvent("metadata_validated");
       res.json(await pinata.uploadMetadata(req.body.metadata));
     },
   );
